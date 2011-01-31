@@ -1,0 +1,5 @@
+Quick setup:
+
+- Add an ini file in the conf directory for each server that you want to scrobble for
+- See the example ini in the conf dir for the needed fields
+- Add a cron job to run `php /absolute/path/to/scrobble.php`
