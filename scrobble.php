@@ -1,8 +1,55 @@
 <?php
+
+// checks a cache file and returns true if it should sent to the api. false if not.
+function check_save($data, $scrobble_type, $mc_name) {
+	$cache_file = dirname(__FILE__) . '/tmp/' . $mc_name;
+	if(!is_file($cache_file)) return true;
+	$cache = file_get_contents($cache_file);
+	$old_data = json_decode($cache);
+	$data = json_decode($data);
+	
+	$data->scrobble_type = $scrobble_type;
+	
+	$comp = $data->title.$data->year.$data->season.$data->episode;
+	$old_comp = $old_data->title.$old_data->year.$old_data->season.$old_data->episode;
+	
+	if($old_comp != $comp) {
+		return true; // show / movie is different than last
+	}
+	elseif($old_data->scrobble_type == "scrobble") {	
+		return false;  // only scrobble once
+	}
+	
+	if($old_data->scrobble_type != $scrobble_type) {
+		return true;
+	}
+	
+	$ts = time();
+	$time_diff = $ts - $old_data->last_sent;
+	
+	if($time_diff > 60*10) {
+		return true;
+	}
+	
+	return false;
+}
+
+function save_check($data, $scrobble_type, $mc_name) {
+	$cache_file = dirname(__FILE__) . '/tmp/' . $mc_name;
+	$data = json_decode($data);
+	$data->scrobble_type = $scrobble_type;
+	$data->mc_name = $mc_name;
+	$data->last_sent = time();
+	
+	$fh = fopen($cache_file, 'w');
+	fwrite($fh, json_encode($data));
+	fclose($fh);
+}
+
 function call_xbmc($settings){
 	// get system info
-	$ch = curl_init();	
-	$mc_url = "http://".$settings['mc_username'].":".$settings['mc_password']."@".$settings['mc_ip'].":".$settings['mc_port']."/jsonrpc";
+	$ch = curl_init();
+	$mc_url = "http://".$settings['mc_username'].":".$settings['mc_password']."@".$settings['mc_address']."/jsonrpc";
 	
 	curl_setopt($ch, CURLOPT_URL,	$mc_url);
 	curl_setopt($ch, CURLINFO_HEADER_OUT, TRUE);
@@ -85,11 +132,12 @@ function call_xbmc($settings){
 			$title = $playing->result->{'VideoPlayer.TvShowTitle'};
 			$season = $playing->result->{'VideoPlayer.Season'};
 			$episode = $playing->result->{'VideoPlayer.Episode'};
+			$media_type = "show";
 			
 			// get tvdb id
 			$ch = curl_init();
 			curl_setopt_array($ch, array(
-				CURLOPT_URL => 'http://' . $settings['mc_username'] . ':' . $settings['mc_password'] . '@' . $settings['mc_ip'] . ':' . $settings['mc_port'] . '/xbmcCmds/xbmcHttp?command=QueryVideoDatabase(' . urlencode("select tvshow.c12 from tvshow where lower(tvshow.c00) = lower('".$title."') limit 1") . ')',
+				CURLOPT_URL => 'http://' . $settings['mc_username'] . ':' . $settings['mc_password'] . '@' . $settings['mc_address'] . '/xbmcCmds/xbmcHttp?command=QueryVideoDatabase(' . urlencode("select tvshow.c12 from tvshow where lower(tvshow.c00) = lower('".$title."') limit 1") . ')',
 				CURLOPT_RETURNTRANSFER => 1
 			));
 			
@@ -108,26 +156,16 @@ function call_xbmc($settings){
 				'plugin_version'				=> PLUGIN_VERSION,
 				'media_center_version'	=> $mc_version,
 				'media_center_date'			=> $mc_build_date
-			));	
-			
-			$ch = curl_init();
-			curl_setopt_array($ch, array(
-				CURLOPT_URL => 'http://api.trakt.tv/show/'.$scrobble_type.'/' . $settings['apikey'],
-				CURLOPT_POSTFIELDS => $data,
-				CURLOPT_POST => 1,
-				CURLOPT_RETURNTRANSFER => 1,
-				CURLOPT_TIMEOUT => 0
 			));
-			return curl_exec($ch);
-			
 		}
 		else {  // submit movie
 			$title = $playing->result->{'VideoPlayer.Title'};
+			$media_type = "movie";
 			
 			// get imdb id
 			$ch = curl_init();
 			curl_setopt_array($ch, array(
-				CURLOPT_URL => 'http://' . $settings['mc_username'] . ':' . $settings['mc_password'] . '@' . $settings['mc_ip'] . ':' . $settings['mc_port'] . '/xbmcCmds/xbmcHttp?command=QueryVideoDatabase(' . urlencode("select movie.c09 from movie where movie.c07 = '".$year."' and lower(movie.c00) = lower('".$title."') limit 1") . ')',
+				CURLOPT_URL => 'http://' . $settings['mc_username'] . ':' . $settings['mc_password'] . '@' . $settings['mc_address'] . '/xbmcCmds/xbmcHttp?command=QueryVideoDatabase(' . urlencode("select movie.c09 from movie where movie.c07 = '".$year."' and lower(movie.c00) = lower('".$title."') limit 1") . ')',
 				CURLOPT_RETURNTRANSFER => 1
 			));
 			
@@ -145,16 +183,25 @@ function call_xbmc($settings){
 				'media_center_version'	=> $mc_version,
 				'media_center_date'			=> $mc_build_date
 			));
+		}
+		
+		$send = check_save($data, $scrobble_type, $settings['mc_name']);
+		
+		if($send) {
+			save_check($data, $scrobble_type, $settings['mc_name']);
 			
 			$ch = curl_init();
 			curl_setopt_array($ch, array(
-				CURLOPT_URL => 'http://api.trakt.tv/movie/'.$scrobble_type.'/' . $settings['apikey'],
+				CURLOPT_URL => 'http://api.trakt.tv/'.$media_type.'/'.$scrobble_type.'/' . $settings['apikey'],
 				CURLOPT_POSTFIELDS => $data,
 				CURLOPT_POST => 1,
 				CURLOPT_RETURNTRANSFER => 1,
 				CURLOPT_TIMEOUT => 0
 			));
 			return curl_exec($ch);
+		}
+		else {
+			return "Show or movie has been recently submitted for this status";
 		}
 	}
 	else {
@@ -164,7 +211,7 @@ function call_xbmc($settings){
 
 function call_plex($settings){
 	// get system info
-	$mc_url = "http://".$settings['mc_username'].":".$settings['mc_password']."@".$settings['mc_ip'].":".$settings['mc_port']."/xbmcCmds/xbmcHttp?command=GetCurrentlyPlaying";
+	$mc_url = "http://".$settings['mc_username'].":".$settings['mc_password']."@".$settings['mc_address']."/xbmcCmds/xbmcHttp?command=GetCurrentlyPlaying";
 	
 	// get player status	
 	$ch = curl_init();	
@@ -176,8 +223,6 @@ function call_plex($settings){
 	
 	$contents = curl_exec($ch);
 	curl_close ($ch);
-	
-	echo $contents;
 	
 	if(strstr($contents, "Type:Video")) {
 		if(strstr($contents, "Show Title:")) {
@@ -223,29 +268,40 @@ function call_plex($settings){
 	
 	if(isset($year)) {
 		$data["year"] = $year;
+		$media_type = "movie";
 	}
 	else {
 		$data["year"] = "";
 		$data['season'] = $season;
 		$data['episode'] = $episode;
+		$media_type = "show";
 	}
 
-	$data = json_encode($data);	
+	$data = json_encode($data);
 	
-	$ch = curl_init();
-	curl_setopt_array($ch, array(
-		CURLOPT_URL => 'http://api.trakt.tv/show/'.$scrobble_type.'/' . $settings['apikey'],
-		CURLOPT_POSTFIELDS => $data,
-		CURLOPT_POST => 1,
-		CURLOPT_RETURNTRANSFER => 1,
-		CURLOPT_TIMEOUT => 0
-	));
-	return curl_exec($ch);
+	$send = check_save($data, $scrobble_type, $settings['mc_name']);
+	
+	if($send) {
+		save_check($data, $scrobble_type, $settings['mc_name']);
+		
+		$ch = curl_init();
+		curl_setopt_array($ch, array(
+			CURLOPT_URL => 'http://api.trakt.tv/'.$media_type.'/'.$scrobble_type.'/' . $settings['apikey'],
+			CURLOPT_POSTFIELDS => $data,
+			CURLOPT_POST => 1,
+			CURLOPT_RETURNTRANSFER => 1,
+			CURLOPT_TIMEOUT => 0
+		));
+		return curl_exec($ch);
+	}
+	else {
+		return "Show or movie has been recently submitted for this status";
+	}
 }
 
 function call_boxee($settings){
 	// get system info
-	$mc_url = "http://".$settings['mc_username'].":".$settings['mc_password']."@".$settings['mc_ip'].":".$settings['mc_port']."/xbmcCmds/xbmcHttp?command=GetCurrentlyPlaying";
+	$mc_url = "http://".$settings['mc_username'].":".$settings['mc_password']."@".$settings['mc_address']."/xbmcCmds/xbmcHttp?command=GetCurrentlyPlaying";
 	
 	// get player status	
 	$ch = curl_init();	
@@ -257,8 +313,6 @@ function call_boxee($settings){
 	
 	$contents = curl_exec($ch);
 	curl_close ($ch);
-	
-	// echo $contents;
 	
 	if(strstr($contents, "Type:Video")) {
 		if(strstr($contents, "Show Title:")) {
@@ -304,24 +358,35 @@ function call_boxee($settings){
 	
 	if(isset($year)) {
 		$data["year"] = $year;
+		$media_type = "movie";
 	}
 	else {
 		$data["year"] = "";
 		$data['season'] = $season;
 		$data['episode'] = $episode;
+		$media_type = "show";
 	}
 
 	$data = json_encode($data);	
 	
-	$ch = curl_init();
-	curl_setopt_array($ch, array(
-		CURLOPT_URL => 'http://api.trakt.tv/show/'.$scrobble_type.'/' . $settings['apikey'],
-		CURLOPT_POSTFIELDS => $data,
-		CURLOPT_POST => 1,
-		CURLOPT_RETURNTRANSFER => 1,
-		CURLOPT_TIMEOUT => 0
-	));
-	return curl_exec($ch);
+	$send = check_save($data, $scrobble_type, $settings['mc_name']);
+	
+	if($send) {
+		save_check($data, $scrobble_type, $settings['mc_name']);
+		
+		$ch = curl_init();
+		curl_setopt_array($ch, array(
+			CURLOPT_URL => 'http://api.trakt.tv/'.$media_type.'/'.$scrobble_type.'/' . $settings['apikey'],
+			CURLOPT_POSTFIELDS => $data,
+			CURLOPT_POST => 1,
+			CURLOPT_RETURNTRANSFER => 1,
+			CURLOPT_TIMEOUT => 0
+		));
+		return curl_exec($ch);
+	}
+	else {
+		return "Show or movie has been recently submitted for this status";
+	}
 }
 
 function scrobble($settings) {
@@ -347,7 +412,7 @@ function scrobble($settings) {
 			$resp = call_xbmc($settings);
 			break;
 	}
-	print $resp."<br/>";
+	print $resp."\n";
 }
 
 $conf_dir = dirname(__FILE__) . '/conf/';
@@ -357,6 +422,26 @@ while(false !== ($file = readdir($fhandle))) {
 	if($file == "." || $file == ".." || !strstr($file, ".ini")) continue;
 	
 	$settings = parse_ini_file($conf_dir.$file);
-	scrobble($settings);
+	list($mc_name) = explode('.', $file);
+	$settings['mc_name'] = $mc_name;
+	
+	// check if server is legit
+	$url = "http://".$settings['mc_username'].":".$settings['mc_password']."@".$settings['mc_address']."/xbmcCmds/xbmcHttp?command=GetCurrentlyPlaying";
+	$timeout = 2;
+	$ch = curl_init();
+	curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, $timeout);
+	curl_setopt($ch, CURLOPT_URL, $url);
+	curl_setopt($ch, CURLOPT_RETURNTRANSFER, 1);
+	curl_setopt($ch, CURLINFO_HEADER_OUT, TRUE);
+	curl_setopt($ch, CURLOPT_HEADER, false);
+	$content = curl_exec($ch);
+	curl_close($ch);
+	
+	if(!$content) {
+		print "Media center ".$settings['mc_name']." unreachable.  Double check your settings!\n";
+	}
+	else {
+		scrobble($settings);
+	}
 }
 ?>
