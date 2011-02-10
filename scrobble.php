@@ -391,7 +391,7 @@ function call_boxee($settings){
 
 function scrobble($settings) {
 	// leave alone
-	define('PLUGIN_VERSION', '0.0.1');
+	define('PLUGIN_VERSION', '1.0.0');
 	define('XBMC_API_KEY', '06f22003e28b5ce3745ddf75503b126973d73de1');
 	define('PLEX_API_KEY', 'aebda823a279b219476c565be863d83739999502');
 	define('BOXEE_API_KEY', '42920cadcb31ff648cb5fe2865473c9bf164c5bd');
