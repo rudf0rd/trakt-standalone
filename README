@@ -1,5 +1,9 @@
 Quick setup:
 
-- Add an ini file in the conf directory for each server that you want to scrobble for
-- See the example ini in the conf dir for the needed fields
-- Add a cron job to run `php /absolute/path/to/scrobble.php`
+1. Add an ini file in the conf directory for each server that you want to scrobble for
+	a. see the example ini file for format and fields
+2. If you don't have php installed, you will need to install it via your distro's method
+	a. ubuntu: apt-get install php5-cli, etc..
+3. Run the command manually `php scrobble.php`
+4. Add a cron job to run `php /absolute/path/to/scrobble.php`
+	a. we recommend running the job at least every 2 minutes
